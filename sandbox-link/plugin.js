@@ -1,7 +1,7 @@
 export const inject = ["react", "panels", "host", "conversation"];
 
-// v3: per-channel. The 🔗 lives in each channel's header (no top-bar button), and every
-// channel keeps its own branch, link, log and status.
+// Per channel: a project folder + branch -> a Vercel Sandbox dev server, via that project's
+// scripts/sandbox/link.mjs (the contract is in README.md). Works with any repo that ships it.
 export function apply(ctx) {
   const React = ctx.react;
   const h = React.createElement;
@@ -10,10 +10,11 @@ export function apply(ctx) {
   const LS = "specialprojects.sandbox-link:";
   const lsGet = (k, d) => { try { const v = localStorage.getItem(LS + k); return v == null ? d : v; } catch { return d; } };
   const lsSet = (k, v) => { try { v ? localStorage.setItem(LS + k, v) : localStorage.removeItem(LS + k); } catch {} };
-  let repo = lsGet("repo", "");
+  // Last folder anyone picked: the default for a channel that hasn't chosen one yet.
+  let lastFolder = lsGet("folder", "");
 
   // ---- per-channel store -------------------------------------------------------------
-  const blank = (key) => ({ status: "idle", url: null, branch: lsGet("branch:" + key, ""), log: [], error: null, info: null, proc: null });
+  const blank = (key) => ({ status: "idle", url: null, folder: lsGet("folder:" + key, ""), branch: lsGet("branch:" + key, ""), log: [], error: null, info: null, proc: null });
   const stores = new Map(); // channelKey -> state
   const subs = new Set();
   const get = (key) => { if (!stores.has(key)) stores.set(key, blank(key)); return stores.get(key); };
@@ -57,6 +58,8 @@ export function apply(ctx) {
       if (s.procQuiet && !quiet) { try { s.proc.kill(); } catch {} s.procCancel && s.procCancel(); }
       else return;
     }
+    const folder = (s.folder || lastFolder).trim();
+    if (!folder) { if (!quiet) set(key, { status: "error", error: "Pick this channel's project folder in the 🔗 panel first." }); return; }
     const args = [cmd, "--json"];
     if (s.branch.trim()) args.push("--branch", s.branch.trim());
     const out = [];
@@ -102,7 +105,7 @@ export function apply(ctx) {
     const limit = quiet ? 30 * 1000 : 6 * 60 * 1000;
     timer = setTimeout(() => finish(lastJson(out), `link.mjs ${cmd} gave no result after ${quiet ? "30 s" : "6 min"} — see log.`), limit);
     Promise.resolve()
-      .then(() => ctx.host.spawn("link", { args: [repo.trim(), ...args], onStdout, onStderr }))
+      .then(() => ctx.host.spawn("link", { args: [folder, ...args], onStdout, onStderr }))
       .then((p) => {
         if (!done && p) set(key, { proc: p });
         else if (done && p && quiet) { try { p.kill(); } catch {} }
@@ -180,16 +183,17 @@ export function apply(ctx) {
         h("a", { href: s.url, target: "_blank", rel: "noreferrer", style: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } },
           s.url.replace(/^https?:\/\//, "") + " ↗"),
         h("button", { type: "button", onClick: copy, style: pillBtn }, copied ? "Copied" : "Copy")) : null,
+      // project folder (per channel)
+      h("label", { style: { display: "flex", flexDirection: "column", gap: 4 } },
+        h("span", { style: small }, "Project folder"),
+        h("input", { value: s.folder, disabled: busy, placeholder: lastFolder || "~/code/my-project",
+          onChange: (e) => { const v = e.target.value; set(key, { folder: v }); lsSet("folder:" + key, v.trim()); if (v.trim()) { lastFolder = v.trim(); lsSet("folder", lastFolder); } },
+          style: { width: "100%" } })),
       // branch
       h("label", { style: { display: "flex", flexDirection: "column", gap: 4 } },
         h("span", { style: small }, "Branch"),
-        h("input", { value: s.branch, disabled: busy, placeholder: (s.info && s.info.branch) || "wise-owl/sandbox-link",
+        h("input", { value: s.branch, disabled: busy, placeholder: (s.info && s.info.branch) || "current branch of that folder",
           onChange: (e) => { set(key, { branch: e.target.value }); lsSet("branch:" + key, e.target.value.trim()); }, style: { width: "100%" } })),
-      // repo folder (shared by all channels on this machine)
-      h("label", { style: { display: "flex", flexDirection: "column", gap: 4 } },
-        h("span", { style: small }, "reflect-orbital folder"),
-        h("input", { value: repo, disabled: busy, placeholder: "~/.buzz/REPOS/reflect-orbital",
-          onChange: (e) => { repo = e.target.value; lsSet("repo", repo.trim()); set(key, {}); }, style: { width: "100%" } })),
       // actions
       h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
         s.url ? h(React.Fragment, null, btn("Pull latest", "sync", true), btn("Stop", "stop")) : btn(busy ? "Starting…" : "Start", "up", true)),

@@ -4,7 +4,7 @@ Buzz desktop plugins for the team. Each folder is one plugin: a `manifest.json` 
 
 | Plugin | Folder | What it does |
 |---|---|---|
-| Sandbox Link | [`sandbox-link/`](sandbox-link/) | A live link for each channel. It starts a Vercel Sandbox dev server for a branch of reflect-orbital and pins the link above the composer. |
+| Sandbox Link | [`sandbox-link/`](sandbox-link/) | A live link for each channel. It starts a Vercel Sandbox dev server for a branch of any repo that has `scripts/sandbox/link.mjs`, and pins the link above the composer. |
 
 ## Install
 
