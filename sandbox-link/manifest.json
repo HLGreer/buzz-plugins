@@ -1,0 +1,19 @@
+{
+  "id": "specialprojects.sandbox-link",
+  "name": "Sandbox Link",
+  "apiVersion": 1,
+  "description": "Live link per channel: spins up a Vercel Sandbox dev server for a branch of your reflect-orbital checkout and pins the link above the composer.",
+  "host": {
+    "processes": [
+      {
+        "id": "link",
+        "program": "zsh",
+        "args": [
+          "-lc",
+          "source ~/.zshrc >/dev/null 2>&1; R=\"${1:-$HOME/.buzz/REPOS/reflect-orbital}\"; shift; R=\"${R/#\\~/$HOME}\"; fail() { echo \"$1\" >&2; printf '{\"state\":\"error\",\"error\":\"%s\"}\\n' \"$1\"; exit $2; }; cd \"$R\" 2>/dev/null || fail \"Folder not found: $R\" 3; [ -f scripts/sandbox/link.mjs ] || fail \"No scripts/sandbox/link.mjs in $R. Pull main and run pnpm install.\" 4; command -v node >/dev/null || fail \"node not found on PATH\" 5; exec node scripts/sandbox/link.mjs \"$@\"",
+          "sandbox-link"
+        ]
+      }
+    ]
+  }
+}
