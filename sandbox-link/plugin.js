@@ -1,4 +1,4 @@
-export const inject = ["react", "panels", "host", "conversation"];
+export const inject = ["react", "panels", "host", "conversation", "agents"];
 
 // Per channel: a project folder + branch -> a Vercel Sandbox dev server, via that project's
 // scripts/sandbox/link.mjs (the contract is in README.md). Works with any repo that ships it.
@@ -50,16 +50,19 @@ export function apply(ctx) {
 
 
   // Runs link.mjs <cmd> --json for one channel. Quiet mode (status polls) leaves log/error alone.
+  // Resolves { info, error } when the command finishes (agent tools await it; UI ignores it).
   function run(key, cmd, { quiet = false } = {}) {
+    let resolveRun;
+    const result = new Promise((r) => { resolveRun = r; });
     const s = get(key);
-    if (!ctx.host.spawn) { if (!quiet) set(key, { status: "error", error: "Process spawning isn't available in this Buzz build." }); return; }
+    if (!ctx.host.spawn) { const error = "Process spawning isn't available in this Buzz build."; if (!quiet) set(key, { status: "error", error }); return Promise.resolve({ error }); }
     if (s.proc) {
       // A background status check must never block a click: cancel it and go.
       if (s.procQuiet && !quiet) { try { s.proc.kill(); } catch {} s.procCancel && s.procCancel(); }
-      else return;
+      else return Promise.resolve({ error: "busy: another command is still running for this channel" });
     }
     const folder = (s.folder || lastFolder).trim();
-    if (!folder) { if (!quiet) set(key, { status: "error", error: "Pick this channel's project folder in the 🔗 panel first." }); return; }
+    if (!folder) { const error = "Pick this channel's project folder in the 🔗 panel first."; if (!quiet) set(key, { status: "error", error }); return Promise.resolve({ error }); }
     const args = [cmd, "--json"];
     if (s.branch.trim()) args.push("--branch", s.branch.trim());
     const out = [];
@@ -76,6 +79,9 @@ export function apply(ctx) {
     const finish = (info, err) => {
       if (done) return; done = true;
       clearTimeout(timer);
+      if (!quiet && info && info.state === "running" && (cmd === "up" || cmd === "start")) startWatch(key);
+      if (cmd === "stop" || cmd === "rm") stopWatch(key);
+      resolveRun(info && info.state !== "error" ? { info } : { info, error: (info && info.error) || err });
       set(key, { proc: null, procQuiet: false, procCancel: null });
       if (info && info.state === "error") {
         set(key, quiet ? { status: get(key).url ? "live" : "idle" } : { status: "error", error: info.error || "link.mjs failed — see log." });
@@ -99,7 +105,7 @@ export function apply(ctx) {
     const onStderr = quiet ? undefined : pushLog;
     if (!quiet) set(key, { status: cmd === "up" ? "starting" : cmd === "stop" ? "stopping" : "working", error: null, log: [`$ link.mjs ${args.join(" ")}`] });
     // Cancelling a superseded quiet check: mark it done without touching state.
-    const cancel = () => { done = true; clearTimeout(timer); };
+    const cancel = () => { done = true; clearTimeout(timer); resolveRun({ error: "cancelled" }); };
     set(key, { proc: { kill() {} }, procQuiet: quiet, procCancel: cancel });
     // `up` on a brand-new branch can take ~3 min; give it 6. A status check gets 30 s.
     const limit = quiet ? 30 * 1000 : 6 * 60 * 1000;
@@ -119,7 +125,33 @@ export function apply(ctx) {
           setTimeout(() => { if (buf) out.push(buf); finish(lastJson(out), `link.mjs ${cmd} exited with ${code} — see log.`); }, 500);
         }
       }, (e) => finish(null, String((e && e.message) || e)));
+    return result;
   }
+
+  // ---- watcher: mirrors every local save into the sandbox (link.mjs watch) -------------
+  // One long-running process per channel, started after a successful Start and killed on
+  // Stop, plugin reload or app quit. Its output goes to the channel's log.
+  const watchers = new Map();
+  function stopWatch(key) { const w = watchers.get(key); if (w) { try { w.kill(); } catch {} watchers.delete(key); set(key, { watching: false }); } }
+  function startWatch(key) {
+    if (!ctx.host.spawn || watchers.has(key)) return;
+    const s = get(key); const folder = (s.folder || lastFolder).trim(); if (!folder) return;
+    const args = ["watch"]; if (s.branch.trim()) args.push("--branch", s.branch.trim());
+    const onLine = (chunk) => {
+      const text = typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+      const lines = text.split(/\r?\n/).filter((l) => l && !l.startsWith("{"));
+      if (lines.length) set(key, { log: [...get(key).log, ...lines].slice(-200) });
+    };
+    const placeholder = { kill() {} };
+    watchers.set(key, placeholder);
+    set(key, { watching: true });
+    Promise.resolve().then(() => ctx.host.spawn("link", { args: [folder, ...args], onStdout: onLine, onStderr: onLine }))
+      .then((p) => {
+        if (watchers.get(key) !== placeholder) { try { p.kill(); } catch {} return; }
+        watchers.set(key, p);
+      }, (e) => { watchers.delete(key); set(key, { watching: false, log: [...get(key).log, "watch failed: " + String((e && e.message) || e)] }); });
+  }
+  ctx.effect(() => () => { for (const k of [...watchers.keys()]) stopWatch(k); });
 
   const ICON =
     "data:image/svg+xml;utf8," +
@@ -197,6 +229,9 @@ export function apply(ctx) {
       // actions
       h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
         s.url ? h(React.Fragment, null, btn("Pull latest", "sync", true), btn("Stop", "stop")) : btn(busy ? "Starting…" : "Start", "up", true)),
+      s.url ? h("div", { style: { display: "flex", alignItems: "center", gap: 8, fontSize: 12 } },
+        h("span", { style: { opacity: 0.6 } }, s.watching ? "Mirroring saves: refresh to see changes" : "Not mirroring local saves"),
+        h("button", { type: "button", style: pillBtn, onClick: () => (s.watching ? stopWatch(key) : startWatch(key)) }, s.watching ? "Pause" : "Mirror saves")) : null,
       s.error ? h("p", { style: { margin: 0, fontSize: 12, color: "var(--color-danger, #ef4444)" } }, s.error) : null,
       // log, collapsed
       s.log.length ? h("details", null,
@@ -255,6 +290,53 @@ export function apply(ctx) {
       dot(failed ? "#ef4444" : "var(--color-text-muted, #a3a3a3)"), failed ? "Live link failed. Retry" : "Start live link"));
   }
   ctx.conversation.registerAccessory({ id: "live-link", title: "Sandbox live link", component: LiveStrip, placement: "composer" });
+
+  // ---- agent tools: the agent doing the work decides which live link a channel shows -----
+  const chanOf = (context, args) => {
+    const c = context || {};
+    const k = (args && args.channel) || c.channelId || c.channel_id || (c.channel && (c.channel.id || c.channel)) || (c.conversation && (c.conversation.channelId || c.conversation.id)) || c.h;
+    return typeof k === "string" && k ? k : null;
+  };
+  const summary = (key, r) => JSON.stringify({ channel: key, ...(r.info || {}), watching: watchers.has(key), error: r.error || undefined });
+  ctx.agents.addTool({
+    name: "sandbox_link_start",
+    description: "Point a channel's live link at a project folder + branch and start (or resume) its Vercel Sandbox dev server. Every file saved in that folder is then mirrored into the sandbox, so a browser refresh shows the change without a commit or push. The folder's checkout should be on the same branch, pushed at least once. Returns the URL. First start ~35 s (up to ~3 min for a new branch). Defaults to the current channel.",
+    inputSchema: { type: "object", properties: {
+      folder: { type: "string", description: "Absolute path of the local checkout/worktree (must contain scripts/sandbox/link.mjs)." },
+      branch: { type: "string", description: "Branch the sandbox runs; normally the folder's current branch." },
+      channel: { type: "string", description: "Channel id; defaults to the conversation's channel." } }, required: ["folder", "branch"] },
+    call: async (_client, context, args) => {
+      const key = chanOf(context, args); if (!key) throw new Error("No channel: pass `channel`. Context keys: " + Object.keys(context || {}).join(","));
+      const folder = String(args.folder).trim(), branch = String(args.branch).trim();
+      if (get(key).branch.trim() !== branch || (get(key).folder || "").trim() !== folder) stopWatch(key);
+      set(key, { folder, branch }); lsSet("folder:" + key, folder); lsSet("branch:" + key, branch); lastFolder = folder; lsSet("folder", folder);
+      const r = await run(key, "up");
+      if (r.error) throw new Error(r.error);
+      return summary(key, r);
+    },
+  });
+  ctx.agents.addTool({
+    name: "sandbox_link_status",
+    description: "Read-only: the current channel's live link (folder, branch, URL, state, whether saves are being mirrored). Never wakes a stopped sandbox.",
+    inputSchema: { type: "object", properties: { channel: { type: "string", description: "Channel id; defaults to the conversation's channel." } } },
+    call: async (_client, context, args) => {
+      const key = chanOf(context, args); if (!key) throw new Error("No channel: pass `channel`. Context keys: " + Object.keys(context || {}).join(","));
+      const s = get(key);
+      const r = (s.folder || lastFolder).trim() ? await run(key, "status", { quiet: true }) : { error: "no project folder set for this channel" };
+      return JSON.stringify({ channel: key, folder: s.folder || lastFolder || null, branch: s.branch || null, ...(r.info || {}), watching: watchers.has(key), error: r.error || undefined });
+    },
+  });
+  ctx.agents.addTool({
+    name: "sandbox_link_stop",
+    description: "Stop the current channel's live link sandbox and its save mirroring. The URL comes back on the next start.",
+    inputSchema: { type: "object", properties: { channel: { type: "string", description: "Channel id; defaults to the conversation's channel." } } },
+    call: async (_client, context, args) => {
+      const key = chanOf(context, args); if (!key) throw new Error("No channel: pass `channel`.");
+      const r = await run(key, "stop");
+      if (r.error) throw new Error(r.error);
+      return summary(key, r);
+    },
+  });
 
   ctx.panels.register({
     id: "sandbox",

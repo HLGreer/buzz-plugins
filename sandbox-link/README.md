@@ -60,6 +60,16 @@ Send progress to stderr; the plugin shows it in the log. A missing `--branch` me
 To start from the reflect-orbital version, copy it and change the Vercel team and project IDs, the env
 step (`pull-env.sh`), the install command and the dev command/port.
 
+## For agents
+
+The plugin gives agents running on the same Buzz app three tools, so the agent doing the work decides what the channel's live link shows:
+
+- `sandbox_link_start(folder, branch)` points the channel's link at that checkout and branch, starts the sandbox and begins mirroring saves. It returns the URL.
+- `sandbox_link_status()` is read-only.
+- `sandbox_link_stop()`
+
+Once the link is started, every file saved in the folder is copied into the sandbox, so refreshing the link shows the change with no commit or push needed. This mirroring needs the project's `link.mjs` to support `watch`.
+
 ## Known limits
 
 - The sandbox holds the starter's personal secrets and GitHub token (in reflect-orbital's implementation).
