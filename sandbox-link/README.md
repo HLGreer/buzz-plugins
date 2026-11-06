@@ -17,7 +17,7 @@ then pick **Sandbox Link**. Review the access: it runs one `zsh` command that ca
 
 - **Vercel:** be a member of the Vercel team that owns the project, and run `vercel login`.
 - **GitHub:** run `gh auth login`, with read access to the project's repo.
-- **Secrets:** the project's own secrets for its env script, for example the sops age key at `~/.config/sops/age/keys.txt`.
+- **Secrets:** nothing to set up for Special Projects sites. `link.mjs` reads the team's dev key from Vercel using your login.
 - **Tools:** Node 22+ and pnpm on your login shell's PATH (`zsh -l`).
 - **Checkout:** a local checkout of the project with `pnpm install` done.
 
@@ -72,6 +72,6 @@ Once the link is started, every file saved in the folder is copied into the sand
 
 ## Known limits
 
-- The sandbox holds the starter's personal secrets and GitHub token (in reflect-orbital's implementation).
+- The sandbox holds the starter's GitHub token. Dev secrets come from the team's Vercel shared env var, so they're never on anyone's machine.
 - A live URL is open to anyone who has it.
 - Buzz doesn't pass clicks on a channel-header icon to the plugin, so the header 🔗 always opens the panel.
